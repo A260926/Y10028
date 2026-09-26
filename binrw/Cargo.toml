@@ -1,0 +1,37 @@
+[package]
+name = "binrw"
+description = "A Rust crate for helping read structs from binary data using ✨macro magic✨"
+categories = [ "encoding", "parsing" ]
+keywords = [ "binary", "encode", "decode", "serialize", "deserialize" ]
+readme = "../README.md"
+authors.workspace = true
+documentation.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+array-init = "2.0.0"
+binrw_derive = { path = "../binrw_derive", version = "0.16.0-pre" }
+bytemuck = "1.0.0"
+
+[dev-dependencies]
+modular-bitfield = "0.13.0"
+trybuild = "1.0.89"
+
+[features]
+default = ["std", "verbose-backtrace"]
+std = []
+verbose-backtrace = ["binrw_derive/verbose-backtrace"]
+
+[[test]]
+name = "derive"
+path = "tests/derive/lib.rs"
+
+[[test]]
+name = "io"
+path = "tests/io/lib.rs"
