@@ -333,13 +333,41 @@ where
         R: Read + Seek,
         Parser: FnOnce(&mut R, Endian, Args) -> BinResult<Value>,
     {
-        let relative_to = args.offset;
+        // `offset` is an absolute base position in the stream, not a delta
+        // from the caller's current position.
         let before = reader.stream_position()?;
-        reader.seek(SeekFrom::Current(relative_to as i64))?;
+        reader.seek(SeekFrom::Start(args.offset))?;
         reader.seek(ptr.into_seek_from()?)?;
-        let value = parser(reader, endian, args.inner);
-        reader.seek(SeekFrom::Start(before))?;
+
+        // Restore the caller's position even if `parser` unwinds; an explicit
+        // restore after the parser keeps the error path returning the seek
+        // error exactly as before.
+        let mut guard = RestorePosition {
+            reader,
+            position: before,
+            disarmed: false,
+        };
+
+        let value = parser(guard.reader, endian, args.inner);
+        guard.reader.seek(SeekFrom::Start(before))?;
+        guard.disarmed = true;
         value
+    }
+}
+
+/// Restores a stream to a fixed position when dropped, so a panic inside a
+/// pointed-to parser cannot leave the caller's stream displaced.
+struct RestorePosition<'a, R: Seek> {
+    reader: &'a mut R,
+    position: u64,
+    disarmed: bool,
+}
+
+impl<R: Seek> Drop for RestorePosition<'_, R> {
+    fn drop(&mut self) {
+        if !self.disarmed {
+            let _ = self.reader.seek(SeekFrom::Start(self.position));
+        }
     }
 }
 
