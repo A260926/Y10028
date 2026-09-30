@@ -333,13 +333,59 @@ where
         R: Read + Seek,
         Parser: FnOnce(&mut R, Endian, Args) -> BinResult<Value>,
     {
-        let relative_to = args.offset;
+        // Save the caller’s position before moving. `offset` is an absolute
+        // base address, so seek there directly instead of treating it as an
+        // increment from the caller’s position; the pointer is then applied
+        // on top of that base.
         let before = reader.stream_position()?;
-        reader.seek(SeekFrom::Current(relative_to as i64))?;
-        reader.seek(ptr.into_seek_from()?)?;
-        let value = parser(reader, endian, args.inner);
-        reader.seek(SeekFrom::Start(before))?;
-        value
+        let seek_to_target = (|| -> BinResult<()> {
+            reader.seek(SeekFrom::Start(args.offset))?;
+            reader.seek(ptr.into_seek_from()?)?;
+            Ok(())
+        })();
+        if let Err(error) = seek_to_target {
+            // Rewind even when reaching the target failed, preserving the
+            // original error as the root cause.
+            return Err(crate::__private::restore_position(reader, before)(error));
+        }
+
+        // The guard restores the saved position if `parser` panics. On a
+        // normal return the explicit rewind disarms it.
+        let restore = RestorePosition {
+            reader,
+            position: before,
+        };
+        let value = parser(restore.reader, endian, args.inner);
+        let rewind = restore.reader.seek(SeekFrom::Start(before));
+        core::mem::forget(restore);
+        match (value, rewind) {
+            // Rewind succeeded: return the parser result untouched so the
+            // original error (cause and position) is preserved.
+            (value, Ok(_)) => value,
+            // Parser succeeded but the rewind failed: report the seek error.
+            (Ok(_), Err(seek_error)) => Err(seek_error.into()),
+            // Both failed: combine the seek error with the parser error
+            // without dropping either one or seeking a second time.
+            (Err(error), Err(seek_error)) => Err(crate::__private::restore_position_err(
+                error,
+                seek_error.into(),
+            )),
+        }
+    }
+}
+
+/// Best-effort rewinds a reader to a saved position when dropped, so the
+/// caller’s position is restored even while the pointed-to parser unwinds.
+struct RestorePosition<'a, R: Seek> {
+    reader: &'a mut R,
+    position: u64,
+}
+
+impl<R: Seek> Drop for RestorePosition<'_, R> {
+    fn drop(&mut self) {
+        // Best-effort rewind while unwinding; an error here must not panic
+        // (a panic during unwinding would abort the process).
+        let _ = self.reader.seek(SeekFrom::Start(self.position));
     }
 }
 

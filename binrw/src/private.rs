@@ -189,7 +189,8 @@ pub fn restore_position<E: Into<Error>, S: Seek>(
     }
 }
 
-fn restore_position_err(error: Error, mut seek_error: Error) -> Error {
+#[must_use]
+pub fn restore_position_err(error: Error, mut seek_error: Error) -> Error {
     let reason = BacktraceFrame::Message("rewinding after a failure".into());
     match error {
         Error::Backtrace(mut bt) => {
